@@ -1,9 +1,7 @@
 // ======================================
 // 🔧 CONFIG – NO TRAILING SPACES!
 // ======================================
-const API_BASE = 'https://chk-be-test2.onrender.com';
-const TASKS_ENDPOINT = `${API_BASE}/tasks`;
-
+const API_BASE = 'https://check-be-production.up.railway.app';
 const LS_TOKEN = 'todo_token';
 const LS_USERNAME = 'todo_username';
 const LS_TASKS = 'todo_tasks_v2';
@@ -13,6 +11,11 @@ let tasks = [];
 
 const VALID_CATEGORIES = ['Work', 'Personal', 'Study', 'Shopping', 'Other'];
 const VALID_PRIORITIES = ['Low', 'Medium', 'High'];
+
+// Build clean URLs (avoids double slashes)
+function buildUrl(path = '') {
+  return `${API_BASE}${path.startsWith('/') ? path : '/' + path}`;
+}
 
 // ======================================
 // 🛠 UTILS
@@ -24,8 +27,8 @@ function uid() {
 function escapeHtml(str) {
   const map = {
     '&': '&amp;',
-    '<': '<',
-    '>': '>',
+    '<': '&lt;',
+    '>': '&gt;',
     '"': '&quot;',
     "'": '&#39;'
   };
@@ -137,7 +140,6 @@ async function safeFetchJson(url, options = {}, timeout = 10000) {
 function normalizeTask(raw) {
   if (!raw) return null;
 
-  // If it's an array: [id, user_id, title, desc, cat, pri, status]
   if (Array.isArray(raw)) {
     return {
       id: String(raw[0]),
@@ -149,7 +151,6 @@ function normalizeTask(raw) {
     };
   }
 
-  // If it's an object
   return {
     id: String(raw.id),
     title: String(raw.title || 'Untitled').trim(),
@@ -161,13 +162,13 @@ function normalizeTask(raw) {
 }
 
 // ======================================
-// 📤 Convert UI → Backend: Must send { subject }
+// 📤 Convert UI → Backend
 // ======================================
 function taskToBackend(task) {
-  const subject = String(task.title || '').trim();
-  if (!subject) throw new Error('Subject must be a non-empty string');
+  const title = String(task.title || '').trim();
+  if (!title) throw new Error('Title must be a non-empty string');
   return {
-    subject,
+    title,
     description: String(task.description || ''),
     category: task.category,
     priority: task.priority,
@@ -186,20 +187,22 @@ function createTaskElement(task) {
   const checkboxId = `task-${task.id}`;
 
   li.innerHTML = `
-    <div class="task-content">
-      <input type="checkbox" id="${checkboxId}" ${task.completed ? 'checked' : ''} />
-      <div class="task-text">
-        <h3 class="task-title">${escapeHtml(task.title)}</h3>
-        ${task.description ? `<p class="task-desc">${escapeHtml(task.description)}</p>` : ''}
-        <div class="task-meta">
-          <span class="priority ${task.priority.toLowerCase()}">Priority: ${task.priority}</span>
-          <span class="category">${task.category}</span>
+    <div class="task-row">
+      <div class="task-content">
+        <input type="checkbox" id="${checkboxId}" ${task.completed ? 'checked' : ''} />
+        <div class="task-text">
+          <h3 class="task-title">${escapeHtml(task.title)}</h3>
+          ${task.description ? `<p class="task-desc">${escapeHtml(task.description)}</p>` : ''}
+          <div class="task-meta">
+            <span class="priority ${task.priority.toLowerCase()}">Priority: ${task.priority}</span>
+            <span class="category">${task.category}</span>
+          </div>
         </div>
       </div>
-    </div>
-    <div class="task-actions">
-      <img class="editButton" src="../images/edit.png" alt="Edit" title="Edit Task" />
-      <img class="deleteButton" src="../images/delete.png" alt="Delete" title="Delete Task" />
+      <div class="task-actions">
+        <img class="editButton" src="../images/edit.png" alt="Edit" title="Edit Task" />
+        <img class="deleteButton" src="../images/delete.png" alt="Delete" title="Delete Task" />
+      </div>
     </div>
     <div class="task-edit" hidden>
       <input type="text" class="editInput" value="${escapeHtml(task.title)}" />
@@ -215,7 +218,6 @@ function createTaskElement(task) {
     </div>
   `;
 
-  // ✅ Use event value directly
   li.querySelector('input[type="checkbox"]').addEventListener('change', (e) => {
     onToggleComplete(task.id, e.target.checked);
   });
@@ -247,7 +249,7 @@ function renderTasks() {
 
   const completed = tasks.filter(t => t.completed).length;
   const total = tasks.length;
-  const progress = document.querySelector('progress');
+  const progress = document.getElementById('progressBar');
   const progressText = document.getElementById('progressText');
   if (progress) progress.value = total ? (completed / total) * 100 : 0;
   if (progressText) progressText.textContent = `${completed}/${total} completed`;
@@ -275,7 +277,6 @@ async function onAdd(e) {
   tasks.push(newTask);
   renderTasks();
 
-  // Reset form
   document.getElementById('taskInput').value = '';
   document.getElementById('taskDesc').value = '';
   document.getElementById('taskCategory').value = 'Personal';
@@ -293,12 +294,11 @@ async function onAdd(e) {
 
     const payload = taskToBackend(newTask);
 
-    const res = await safeFetchJson(TASKS_ENDPOINT, {
+    const res = await safeFetchJson(buildUrl('/tasks'), {
       method: 'POST',
       body: JSON.stringify(payload)
     });
 
-    // ✅ Use `res.id` only if returned
     const realId = res.id ? String(res.id) : newTask.id;
     const task = tasks.find(t => t.id === newTask.id);
     if (task) {
@@ -308,7 +308,7 @@ async function onAdd(e) {
 
     showSuccess(`✅ "${title}" added!`);
   } catch (err) {
-    console.error('Add failed:', err);
+    showError('Add failed:', err);
     const payload = taskToBackend(newTask);
     savePending([...loadPending(), { type: 'add', tempId: newTask.id, payload }]);
     showError(`⚠️ Saved offline: ${err.message}`);
@@ -337,7 +337,7 @@ async function onToggleComplete(id, completed) {
   }
 
   try {
-    await safeFetchJson(`${TASKS_ENDPOINT}/${id}`, {
+    await safeFetchJson(buildUrl(`/tasks/${id}`), {
       method: 'PUT',
       body: JSON.stringify(payload)
     });
@@ -383,7 +383,7 @@ function finishEdit(id) {
     return;
   }
 
-  safeFetchJson(`${TASKS_ENDPOINT}/${id}`, {
+  safeFetchJson(buildUrl(`/tasks/${id}`), {
     method: 'PUT',
     body: JSON.stringify(payload)
   })
@@ -417,7 +417,7 @@ async function onDelete(id) {
   }
 
   try {
-    await safeFetchJson(`${TASKS_ENDPOINT}/${id}`, { method: 'DELETE' });
+    await safeFetchJson(buildUrl(`/tasks/${id}`), { method: 'DELETE' });
     showSuccess('🗑️ Deleted!');
   } catch (err) {
     savePending([...loadPending(), { type: 'delete', id }]);
@@ -437,7 +437,7 @@ async function syncPending() {
   for (const op of ops) {
     try {
       if (op.type === 'add') {
-        const res = await safeFetchJson(TASKS_ENDPOINT, {
+        const res = await safeFetchJson(buildUrl('/tasks'), {
           method: 'POST',
           body: JSON.stringify(op.payload)
         });
@@ -447,14 +447,13 @@ async function syncPending() {
           if (task) task.id = realId;
         }
       } else if (op.type === 'update') {
-        await safeFetchJson(`${TASKS_ENDPOINT}/${op.id}`, {
+        await safeFetchJson(buildUrl(`/tasks/${op.id}`), {
           method: 'PUT',
           body: JSON.stringify(op.payload)
         });
       } else if (op.type === 'delete') {
-        await safeFetchJson(`${TASKS_ENDPOINT}/${op.id}`, { method: 'DELETE' });
+        await safeFetchJson(buildUrl(`/tasks/${op.id}`), { method: 'DELETE' });
       }
-      // If successful, don't add to remaining
     } catch (err) {
       remaining.push(op);
     }
@@ -481,14 +480,14 @@ async function fetchTasks() {
   }
 
   try {
-    const data = await safeFetchJson(TASKS_ENDPOINT);
+    const data = await safeFetchJson(buildUrl('/tasks'));
     if (!Array.isArray(data)) throw new Error('Invalid format');
     tasks = data.map(normalizeTask).filter(Boolean);
     saveLocal();
     renderTasks();
     await syncPending();
   } catch (err) {
-    console.error('Fetch failed:', err);
+    showError('Fetch failed:', err);
     const local = loadLocal().map(normalizeTask).filter(Boolean);
     if (local.length) {
       tasks = local;
